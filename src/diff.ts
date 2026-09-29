@@ -1,6 +1,6 @@
 import type { ComponentSnapshot, ComponentSpec, DiffRow } from './types';
 
-const selectedFields: Array<Exclude<keyof ComponentSpec, 'snapshots'>> = [
+const selectedFields: Array<Exclude<keyof ComponentSpec, 'snapshots' | 'revisionOfId'>> = [
   'name', 'category', 'status', 'purpose', 'usage', 'states', 'keyboardBehavior', 'screenReader', 'disabledScenarios'
 ];
 

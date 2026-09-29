@@ -2,7 +2,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { diffAgainstSnapshot } from './diff';
 import { SpecStore } from './store';
-import type { ComponentExample, ComponentSpec, PreviewDensity, PreviewTheme, PropertySpec, ValidationIssue } from './types';
+import type { ComponentExample, ComponentSnapshot, ComponentSpec, PreviewDensity, PreviewTheme, PropertySpec, ValidationIssue } from './types';
 
 type EditorTab = 'overview' | 'api' | 'accessibility' | 'examples' | 'history';
 
@@ -13,7 +13,8 @@ export class SpecA11yWorkbench extends LitElement {
     previewTheme: { state: true },
     previewDensity: { state: true },
     toast: { state: true },
-    showValidation: { state: true }
+    showValidation: { state: true },
+    historyRevision: { state: true }
   };
 
   private store = new SpecStore();
@@ -23,6 +24,7 @@ export class SpecA11yWorkbench extends LitElement {
   private previewDensity: PreviewDensity = 'regular';
   private toast = '';
   private showValidation = true;
+  private historyRevision: number | null = null;
   private toastTimer?: number;
 
   static styles = css`
@@ -64,7 +66,8 @@ export class SpecA11yWorkbench extends LitElement {
     .component-item[aria-current='page'] { border-color: var(--spectrum-blue-600); background: var(--spectrum-blue-200); }
     .item-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
     .item-meta { display: block; color: var(--spectrum-gray-700); font-size: 12px; margin-top: 5px; }
-    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; background: var(--spectrum-gray-300); }
+    .item-meta .draft-line { display: block; color: var(--spectrum-orange-800, var(--spectrum-gray-800)); }
+    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; background: var(--spectrum-gray-300); white-space: nowrap; }
     .pill.published { background: var(--spectrum-green-300); }
     .pill.review { background: var(--spectrum-orange-300); }
     .main { min-width: 0; padding: 22px; }
@@ -72,6 +75,14 @@ export class SpecA11yWorkbench extends LitElement {
     .title-row h2 { font-size: 28px; margin: 0; letter-spacing: -.035em; }
     .title-row p { margin: 6px 0 0; color: var(--spectrum-gray-700); }
     .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .mode-banner {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px;
+      border: 1px solid var(--spectrum-gray-300); background: var(--spectrum-gray-100);
+    }
+    .mode-banner.readonly { border-color: var(--spectrum-green-500); background: var(--spectrum-green-200); }
+    .mode-banner.revision { border-color: var(--spectrum-orange-500); background: var(--spectrum-orange-200); }
+    .mode-banner strong { flex: 1; min-width: 200px; }
     .tabs { display: flex; gap: 5px; overflow-x: auto; padding: 5px; border: 1px solid var(--spectrum-gray-300); border-radius: 12px; background: var(--spectrum-gray-100); margin-bottom: 16px; }
     .tab { border: 0; border-radius: 8px; background: transparent; color: var(--spectrum-gray-800); padding: 8px 12px; font: inherit; cursor: pointer; white-space: nowrap; }
     .tab[aria-selected='true'] { background: var(--spectrum-gray-50); box-shadow: 0 1px 4px rgb(0 0 0 / .12); font-weight: 700; }
@@ -87,10 +98,13 @@ export class SpecA11yWorkbench extends LitElement {
     }
     textarea:focus, input:focus, select:focus { outline: 3px solid var(--spectrum-blue-400); outline-offset: 1px; border-color: var(--spectrum-blue-700); }
     textarea { min-height: 110px; resize: vertical; }
+    input:disabled, textarea:disabled, select:disabled {
+      background: var(--spectrum-gray-200); color: var(--spectrum-gray-700); cursor: not-allowed; opacity: .85;
+    }
     .property-list, .example-list { display: grid; gap: 12px; }
     .property-card, .example-card { border: 1px solid var(--spectrum-gray-300); border-radius: 12px; padding: 14px; background: var(--spectrum-gray-75, var(--spectrum-gray-100)); }
     .property-head, .example-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-    .property-head strong, .example-head strong { flex: 1; }
+    .property-head h2, .example-head strong { flex: 1; }
     .inline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
     .empty { padding: 28px; border: 1px dashed var(--spectrum-gray-400); border-radius: 12px; text-align: center; color: var(--spectrum-gray-700); }
     .inspector { border-left: 1px solid var(--spectrum-gray-300); padding: 18px; display: grid; align-content: start; gap: 15px; }
@@ -113,6 +127,15 @@ export class SpecA11yWorkbench extends LitElement {
     .before { color: var(--spectrum-red-800); white-space: pre-wrap; }
     .after { color: var(--spectrum-green-900); white-space: pre-wrap; }
     pre { white-space: pre-wrap; word-break: break-word; background: #202020; color: #f5f5f5; padding: 12px; border-radius: 8px; font-size: 12px; }
+    .snapshot-list { display: grid; gap: 8px; margin-top: 12px; }
+    .snapshot-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+      border: 1px solid var(--spectrum-gray-300); border-radius: 10px; background: var(--spectrum-gray-50);
+      padding: 10px 12px; font: inherit; color: inherit; cursor: pointer;
+    }
+    .snapshot-item[aria-pressed='true'] { border-color: var(--spectrum-blue-600); background: var(--spectrum-blue-200); }
+    .snapshot-meta { display: block; font-size: 11px; color: var(--spectrum-gray-700); margin-top: 2px; }
+    .frozen-note { font-size: 11px; color: var(--spectrum-gray-700); margin-top: 8px; }
     .search-empty { padding: 20px 8px; color: var(--spectrum-gray-700); font-size: 13px; }
     .footer-hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 30; background: #202020; color: white; border-radius: 999px; padding: 6px 12px; font-size: 11px; opacity: .9; }
     sp-toast { position: fixed; right: 18px; bottom: 18px; z-index: 50; }
@@ -160,8 +183,7 @@ export class SpecA11yWorkbench extends LitElement {
     }
     if (modifier && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      this.store.createSnapshot('键盘保存');
-      this.flash('已创建版本快照');
+      this.publishSelected();
       return;
     }
     if (modifier && event.key.toLowerCase() === 'k') {
@@ -172,6 +194,11 @@ export class SpecA11yWorkbench extends LitElement {
     if (event.altKey && event.key.toLowerCase() === 'n') {
       event.preventDefault();
       this.store.addComponent();
+      return;
+    }
+    if (event.altKey && event.key.toLowerCase() === 'r') {
+      event.preventDefault();
+      this.createRevisionForSelected();
       return;
     }
     const tabMap: Record<string, EditorTab> = { '1': 'overview', '2': 'api', '3': 'accessibility', '4': 'examples', '5': 'history' };
@@ -203,8 +230,9 @@ export class SpecA11yWorkbench extends LitElement {
               ></sp-search>
               <sp-button variant="secondary" ?disabled=${!this.store.canUndo} @click=${() => this.store.undo()}>撤销</sp-button>
               <sp-button variant="secondary" ?disabled=${!this.store.canRedo} @click=${() => this.store.redo()}>重做</sp-button>
-              <sp-button variant="accent" @click=${() => { this.store.createSnapshot('工具栏保存'); this.flash('版本已保存'); }}>保存版本</sp-button>
-              <span class="save-state">本地自动保存 · ${selected?.revision ?? 0} 版</span>
+              <span class="save-state">
+                本地自动保存 · ${selected ? `r${selected.revision} · ${selected.status === 'published' ? '已发布只读' : selected.revisionOfId ? '修订草稿' : '可编辑'}` : '未选择组件'}
+              </span>
             </div>
           </header>
           <div class="layout">
@@ -214,28 +242,41 @@ export class SpecA11yWorkbench extends LitElement {
                 <sp-action-button size="s" label="新建组件" @click=${() => this.store.addComponent()}>＋</sp-action-button>
               </div>
               <div class="component-list">
-                ${filtered.length ? repeat(filtered, (item) => item.id, (item) => html`
-                  <button class="component-item" aria-current=${item.id === this.store.state.selectedId ? 'page' : nothing} @click=${() => this.store.select(item.id)}>
-                    <span class="item-title">
-                      <span>${item.name}</span>
-                      <span class="pill ${item.status}">${this.statusLabel(item.status)}</span>
-                    </span>
-                    <span class="item-meta">${item.category} · ${item.properties.length} 个属性 · ${item.examples.length} 个示例</span>
-                  </button>
-                `) : html`<div class="search-empty">没有匹配的组件。可尝试属性名、键盘行为或代码文本。</div>`}
+                ${filtered.length ? repeat(filtered, (item) => item.id, (item) => this.renderListItem(item)) : html`<div class="search-empty">没有匹配的组件。可尝试属性名、键盘行为或代码文本。</div>`}
               </div>
             </aside>
             <main class="main">${selected ? this.renderEditor(selected) : html`<div class="empty">新建或选择组件开始编辑。</div>`}</main>
             <aside class="inspector" aria-label="预览与检查">
               ${this.renderPreview(selected)}
-              ${this.renderValidation(selectedIssues)}
+              ${this.renderValidation(selected, selectedIssues)}
             </aside>
           </div>
           ${this.toast ? html`<sp-toast open variant="positive" timeout="3000">${this.toast}</sp-toast>` : nothing}
-          <div class="footer-hint">⌘/Ctrl+Z 撤销 · ⇧⌘/Ctrl+Z 重做 · ⌘/Ctrl+K 搜索 · Alt+1–5 切换面板</div>
+          <div class="footer-hint">⌘/Ctrl+Z 撤销 · ⌘/Ctrl+S 发布 · ⌘/Ctrl+K 搜索 · Alt+R 创建修订 · Alt+1–5 切换面板</div>
         </div>
       </sp-theme>
     `;
+  }
+
+  private renderListItem(item: ComponentSpec): TemplateResult {
+    const parent = item.revisionOfId ? this.store.state.components.find((component) => component.id === item.revisionOfId) : undefined;
+    return html`
+      <button class="component-item" aria-current=${item.id === this.store.state.selectedId ? 'page' : nothing} @click=${() => this.selectComponent(item.id)}>
+        <span class="item-title">
+          <span>${item.name}${item.revisionOfId ? '（修订草稿）' : ''}</span>
+          <span class="pill ${item.status}">${this.statusLabel(item.status)}</span>
+        </span>
+        <span class="item-meta">
+          ${item.category} · ${item.properties.length} 个属性 · ${item.examples.length} 个示例
+          ${parent ? html`<span class="draft-line">基于「${parent.name}」r${parent.revision} 已发布版</span>` : nothing}
+        </span>
+      </button>
+    `;
+  }
+
+  private selectComponent(id: string) {
+    this.historyRevision = null;
+    this.store.select(id);
   }
 
   private renderEditor(component: ComponentSpec): TemplateResult {
@@ -246,15 +287,16 @@ export class SpecA11yWorkbench extends LitElement {
           <p>${component.purpose}</p>
         </div>
         <div class="actions">
-          <select aria-label="组件状态" .value=${component.status} @change=${(event: Event) => this.store.updateComponent({ status: (event.currentTarget as HTMLSelectElement).value as ComponentSpec['status'] })}>
-            <option value="draft">草稿</option>
-            <option value="review">待审</option>
-            <option value="published">已发布</option>
-          </select>
-          <sp-button variant="secondary" @click=${() => this.store.createSnapshot('编辑器保存')}>保存快照</sp-button>
-          ${this.hasStaleExamples(component) ? html`<sp-button variant="accent" @click=${() => { this.store.migrateExamples(); this.flash('示例已迁移到当前契约'); }}>迁移示例</sp-button>` : nothing}
+          <span class="pill ${component.status}">${this.statusLabel(component.status)} · r${component.revision}</span>
+          ${component.status === 'published'
+            ? html`<sp-button variant="accent" @click=${() => this.createRevisionForSelected()}>创建修订</sp-button>`
+            : html`
+              ${component.revisionOfId ? html`<sp-button variant="secondary" @click=${() => this.store.discardRevision()}>放弃修订</sp-button>` : nothing}
+              <sp-button variant="accent" @click=${() => this.publishSelected()}>${component.revisionOfId ? '发布修订' : '发布规范'}</sp-button>
+            `}
         </div>
       </div>
+      ${this.renderModeBanner(component)}
       <div class="tabs" role="tablist" aria-label="编辑区域">
         ${this.renderTab('overview', '1 概述')}
         ${this.renderTab('api', '2 属性与状态')}
@@ -270,79 +312,118 @@ export class SpecA11yWorkbench extends LitElement {
     `;
   }
 
+  private renderModeBanner(component: ComponentSpec): TemplateResult {
+    if (component.status === 'published') {
+      return html`
+        <div class="mode-banner readonly" role="status">
+          <strong>该规范已发布并锁定为只读，内容与历史快照不会被修改。需要变更时请创建修订草稿。</strong>
+          <sp-button size="s" variant="accent" @click=${() => this.createRevisionForSelected()}>创建修订（Alt+R）</sp-button>
+        </div>
+      `;
+    }
+    if (component.revisionOfId) {
+      const parent = this.store.publishedParentOf(component);
+      const blockers = this.store.publishBlockers();
+      return html`
+        <div class="mode-banner revision" role="status">
+          <strong>修订草稿：基于${parent ? `「${parent.name}」r${parent.revision} 已发布版` : '原已发布版'}复制，发布成功前原版本照旧可查；草稿已保存在本地，可随时继续处理。</strong>
+          <sp-button size="s" variant="secondary" @click=${() => this.store.discardRevision()}>放弃修订</sp-button>
+          <sp-button size="s" variant="accent" ?disabled=${blockers.length > 0} @click=${() => this.publishSelected()}>发布修订（⌘/Ctrl+S）</sp-button>
+          ${blockers.length ? html`<span class="issue error" style="margin:0;flex-basis:100%"><strong>暂不能发布</strong>${blockers.map((message) => html`${message}<br />`)}</span>` : nothing}
+        </div>
+      `;
+    }
+    return html`
+      <div class="mode-banner" role="status">
+        <strong>尚未发布的规范草稿，可直接编辑并发布。</strong>
+        <sp-button size="s" variant="accent" ?disabled=${this.store.publishBlockers().length > 0} @click=${() => this.publishSelected()}>发布规范</sp-button>
+      </div>
+    `;
+  }
+
   private renderTab(tab: EditorTab, label: string): TemplateResult {
     return html`<button class="tab" role="tab" aria-selected=${this.tab === tab} @click=${() => { this.tab = tab; }}>${label}</button>`;
   }
 
   private renderOverview(component: ComponentSpec): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <section class="panel" aria-label="组件概述">
         <div class="form-grid">
-          <label class="field"><span>组件名称</span><input type="text" .value=${component.name} @change=${(event: Event) => this.store.updateComponent({ name: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="field"><span>分类</span><input type="text" .value=${component.category} @change=${(event: Event) => this.store.updateComponent({ category: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="field full"><span>用途</span><textarea .value=${component.purpose} @change=${(event: Event) => this.store.updateComponent({ purpose: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
-          <label class="field full"><span>使用规则</span><textarea .value=${component.usage} @change=${(event: Event) => this.store.updateComponent({ usage: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
-          <label class="field full"><span>禁用场景</span><textarea .value=${component.disabledScenarios} @change=${(event: Event) => this.store.updateComponent({ disabledScenarios: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field"><span>组件名称</span><input type="text" .value=${component.name} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ name: (event.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="field"><span>分类</span><input type="text" .value=${component.category} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ category: (event.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="field full"><span>用途</span><textarea .value=${component.purpose} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ purpose: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>使用规则</span><textarea .value=${component.usage} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ usage: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>禁用场景</span><textarea .value=${component.disabledScenarios} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ disabledScenarios: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
         </div>
       </section>
     `;
   }
 
   private renderApi(component: ComponentSpec): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <section class="panel">
         <div class="property-head">
           <h2>属性契约</h2>
-          <sp-button size="s" variant="secondary" @click=${() => this.store.addProperty()}>新增属性</sp-button>
+          ${readonly ? nothing : html`<sp-button size="s" variant="secondary" @click=${() => this.store.addProperty()}>新增属性</sp-button>`}
         </div>
         <div class="property-list">
-          ${component.properties.length ? repeat(component.properties, (item) => item.id, (property) => this.renderProperty(property)) : html`<div class="empty">尚未定义属性。</div>`}
+          ${component.properties.length ? repeat(component.properties, (item) => item.id, (property) => this.renderProperty(component, property)) : html`<div class="empty">尚未定义属性。</div>`}
         </div>
         <div class="form-grid" style="margin-top: 18px">
-          <label class="field full"><span>状态说明</span><textarea .value=${component.states} @change=${(event: Event) => this.store.updateComponent({ states: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
-          <label class="field full"><span>交互签名（修改后会标记关联示例失效）</span><textarea .value=${component.interactionSignature} @change=${(event: Event) => this.store.updateComponent({ interactionSignature: (event.currentTarget as HTMLTextAreaElement).value }, true)}></textarea></label>
+          <label class="field full"><span>状态说明</span><textarea .value=${component.states} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ states: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>交互签名（变化后所有关联示例将待确认）</span><textarea .value=${component.interactionSignature} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ interactionSignature: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
         </div>
       </section>
     `;
   }
 
-  private renderProperty(property: PropertySpec): TemplateResult {
+  private renderProperty(component: ComponentSpec, property: PropertySpec): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <article class="property-card">
         <div class="property-head">
           <strong>${property.name || '未命名属性'}</strong>
-          <sp-action-button size="s" label="删除属性" @click=${() => this.store.removeProperty(property.id)}>删除</sp-action-button>
+          ${readonly ? nothing : html`<sp-action-button size="s" label="删除属性" @click=${() => this.store.removeProperty(property.id)}>删除</sp-action-button>`}
         </div>
         <div class="form-grid">
-          <label class="field"><span>名称</span><input type="text" .value=${property.name} @change=${(event: Event) => this.store.updateProperty(property.id, { name: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="field"><span>类型</span><input type="text" .value=${property.type} @change=${(event: Event) => this.store.updateProperty(property.id, { type: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="field"><span>默认值</span><input type="text" .value=${property.defaultValue} @change=${(event: Event) => this.store.updateProperty(property.id, { defaultValue: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="inline"><input type="checkbox" .checked=${property.required} @change=${(event: Event) => this.store.updateProperty(property.id, { required: (event.currentTarget as HTMLInputElement).checked })} /> 必填属性</label>
-          <label class="field full"><span>属性说明</span><textarea .value=${property.description} @change=${(event: Event) => this.store.updateProperty(property.id, { description: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field"><span>名称（改名会同步更新引用该属性的示例）</span><input type="text" .value=${property.name} ?disabled=${readonly} @change=${(event: Event) => {
+            const updated = this.store.updateProperty(property.id, { name: (event.currentTarget as HTMLInputElement).value });
+            if (updated > 0) this.flash(`属性已改名，已同步更新 ${updated} 个引用示例`);
+          }} /></label>
+          <label class="field"><span>类型</span><input type="text" .value=${property.type} ?disabled=${readonly} @change=${(event: Event) => this.store.updateProperty(property.id, { type: (event.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="field"><span>默认值</span><input type="text" .value=${property.defaultValue} ?disabled=${readonly} @change=${(event: Event) => this.store.updateProperty(property.id, { defaultValue: (event.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="inline"><input type="checkbox" .checked=${property.required} ?disabled=${readonly} @change=${(event: Event) => this.store.updateProperty(property.id, { required: (event.currentTarget as HTMLInputElement).checked })} /> 必填属性</label>
+          <label class="field full"><span>属性说明</span><textarea .value=${property.description} ?disabled=${readonly} @change=${(event: Event) => this.store.updateProperty(property.id, { description: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
         </div>
       </article>
     `;
   }
 
   private renderAccessibility(component: ComponentSpec): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <section class="panel">
+        ${readonly ? html`<div class="issue info" style="margin-bottom:12px"><strong>只读视图</strong>已发布规范的键盘行为与读屏说明不可修改，请创建修订。</div>` : html`<div class="issue info" style="margin-bottom:12px"><strong>变更会传播</strong>键盘行为或读屏说明一旦修改，所有关联示例都会变为“待确认”，逐例确认前不能发布。</div>`}
         <div class="form-grid">
-          <label class="field full"><span>键盘行为</span><textarea .value=${component.keyboardBehavior} @change=${(event: Event) => this.store.updateComponent({ keyboardBehavior: (event.currentTarget as HTMLTextAreaElement).value }, true)}></textarea></label>
-          <label class="field full"><span>读屏说明</span><textarea .value=${component.screenReader} @change=${(event: Event) => this.store.updateComponent({ screenReader: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
-          <label class="field full"><span>禁用场景</span><textarea .value=${component.disabledScenarios} @change=${(event: Event) => this.store.updateComponent({ disabledScenarios: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>键盘行为</span><textarea .value=${component.keyboardBehavior} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ keyboardBehavior: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>读屏说明</span><textarea .value=${component.screenReader} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ screenReader: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>禁用场景</span><textarea .value=${component.disabledScenarios} ?disabled=${readonly} @change=${(event: Event) => this.store.updateComponent({ disabledScenarios: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
         </div>
       </section>
     `;
   }
 
   private renderExamples(component: ComponentSpec): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <section class="panel">
         <div class="property-head">
           <h2>关联示例</h2>
-          <sp-button size="s" variant="secondary" @click=${() => this.store.addExample()}>新增示例</sp-button>
+          ${readonly ? nothing : html`<sp-button size="s" variant="secondary" @click=${() => this.store.addExample()}>新增示例</sp-button>`}
         </div>
+        ${readonly ? html`<div class="issue info" style="margin-bottom:12px"><strong>只读视图</strong>示例仅可查看与复制；要修改请先创建修订。</div>` : nothing}
         <div class="example-list">
           ${component.examples.length ? repeat(component.examples, (item) => item.id, (example) => this.renderExample(component, example)) : html`<div class="empty">尚无示例。新增后会追踪属性依赖和版本契约。</div>`}
         </div>
@@ -351,23 +432,28 @@ export class SpecA11yWorkbench extends LitElement {
   }
 
   private renderExample(component: ComponentSpec, example: ComponentExample): TemplateResult {
+    const readonly = component.status === 'published';
     return html`
       <article class="example-card">
         <div class="example-head">
           <strong>${example.title}</strong>
-          <span class="pill ${example.stale ? 'review' : 'published'}">${example.stale ? '需要迁移' : `r${example.createdFromRevision}`}</span>
+          <span class="pill ${example.stale ? 'review' : 'published'}">${example.stale ? '待确认' : `r${example.createdFromRevision} 已确认`}</span>
           <sp-action-button size="s" label="复制代码" @click=${() => this.copy(example.code)}>复制</sp-action-button>
-          <sp-action-button size="s" label="删除示例" @click=${() => this.store.removeExample(example.id)}>删除</sp-action-button>
+          ${readonly ? nothing : html`<sp-action-button size="s" label="删除示例" @click=${() => this.store.removeExample(example.id)}>删除</sp-action-button>`}
         </div>
-        ${example.stale ? html`<div class="issue warning"><strong>关联失效</strong>${example.staleReason}</div>` : nothing}
+        ${example.stale ? html`
+          <div class="issue warning">
+            <strong>示例待确认</strong>${example.staleReason}
+            ${readonly ? nothing : html`<br /><button @click=${() => { this.store.confirmExample(example.id); this.flash('示例已确认'); }}>已核对无误，确认示例</button>`}
+          </div>` : nothing}
         <div class="form-grid">
-          <label class="field full"><span>标题</span><input type="text" .value=${example.title} @change=${(event: Event) => this.store.updateExample(example.id, { title: (event.currentTarget as HTMLInputElement).value })} /></label>
-          <label class="field full"><span>代码</span><textarea .value=${example.code} @change=${(event: Event) => this.store.updateExample(example.id, { code: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
+          <label class="field full"><span>标题</span><input type="text" .value=${example.title} ?disabled=${readonly} @change=${(event: Event) => this.store.updateExample(example.id, { title: (event.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="field full"><span>代码</span><textarea .value=${example.code} ?disabled=${readonly} @change=${(event: Event) => this.store.updateExample(example.id, { code: (event.currentTarget as HTMLTextAreaElement).value })}></textarea></label>
           <div class="field full">
             <span>依赖属性</span>
             <div class="inline" style="flex-wrap: wrap">
               ${component.properties.map((property) => html`
-                <label class="inline"><input type="checkbox" .checked=${example.propertyIds.includes(property.id)} @change=${(event: Event) => {
+                <label class="inline"><input type="checkbox" .checked=${example.propertyIds.includes(property.id)} ?disabled=${readonly} @change=${(event: Event) => {
                   const values = new Set(example.propertyIds);
                   (event.currentTarget as HTMLInputElement).checked ? values.add(property.id) : values.delete(property.id);
                   this.store.updateExample(example.id, { propertyIds: [...values] });
@@ -382,21 +468,47 @@ export class SpecA11yWorkbench extends LitElement {
     `;
   }
 
+  private historySource(component: ComponentSpec): { snapshots: ComponentSnapshot[]; baseline: ComponentSpec; label: string } | undefined {
+    if (component.revisionOfId) {
+      const parent = this.store.publishedParentOf(component);
+      if (!parent) return undefined;
+      return { snapshots: parent.snapshots, baseline: component, label: `与发布版「${parent.name}」的冻结快照比较` };
+    }
+    return component.snapshots.length
+      ? { snapshots: component.snapshots, baseline: component, label: component.status === 'published' ? '当前发布版与冻结快照比较' : '当前草稿与已冻结快照比较' }
+      : undefined;
+  }
+
   private renderHistory(component: ComponentSpec): TemplateResult {
-    const snapshot = component.snapshots[0];
-    const rows = diffAgainstSnapshot(component, snapshot);
+    const source = this.historySource(component);
+    const snapshots = source?.snapshots ?? [];
+    const chosen = snapshots.find((snapshot) => snapshot.revision === this.historyRevision) ?? snapshots[snapshots.length - 1];
+    const rows = chosen ? diffAgainstSnapshot(source!.baseline, chosen) : [];
     return html`
       <section class="panel">
         <div class="property-head">
-          <h2>版本与迁移</h2>
-          <sp-button size="s" variant="secondary" @click=${() => this.store.createSnapshot('历史面板保存')}>保存当前版本</sp-button>
+          <h2>版本快照</h2>
+          ${component.status === 'published' ? html`<sp-button size="s" variant="accent" @click=${() => this.createRevisionForSelected()}>创建修订</sp-button>` : nothing}
         </div>
-        <p>当前为 r${component.revision}。最近快照：${snapshot ? `r${snapshot.revision} · ${new Date(snapshot.savedAt).toLocaleString('zh-CN')}` : '暂无'}。</p>
-        ${snapshot ? html`
-          <h3>与最近快照的差异</h3>
-          ${rows.length ? html`<div class="diff">${rows.map((row) => html`<div class="diff-row"><b>${row.field}</b><span class="before">- ${row.before || '（空）'}</span><br /><span class="after">+ ${row.after || '（空）'}</span></div>`)}</div>` : html`<div class="issue info">当前内容与最近快照一致。</div>`}
-        ` : html`<div class="empty">保存一次版本后即可比较字段、属性和示例变化。</div>`}
-        ${this.hasStaleExamples(component) ? html`<div class="issue warning" style="margin-top: 14px"><strong>检测到待迁移示例</strong>迁移会保留代码内容，清理已删除属性引用并更新契约版本。<br /><button @click=${() => this.store.migrateExamples()}>立即迁移</button></div>` : nothing}
+        ${component.status === 'published'
+          ? html`<p>当前为已发布 r${component.revision}。快照只读，任何修改都要通过修订流程，发布成功后才会冻结新快照。</p>`
+          : html`<p>当前为 r${component.revision}${component.revisionOfId ? ' 修订草稿' : ' 草稿'}。发布成功才会冻结新快照，历史快照始终保持不变。</p>`}
+        ${source ? html`
+          <div class="snapshot-list" role="group" aria-label="冻结快照列表">
+            ${repeat(snapshots, (snapshot) => snapshot.revision, (snapshot) => html`
+              <button class="snapshot-item" type="button" aria-pressed=${chosen?.revision === snapshot.revision} @click=${() => { this.historyRevision = snapshot.revision; }}>
+                <span class="pill published">r${snapshot.revision}</span>
+                <span>
+                  ${snapshot.reason}
+                  <span class="snapshot-meta">${new Date(snapshot.savedAt).toLocaleString('zh-CN')}</span>
+                </span>
+              </button>
+            `)}
+          </div>
+          <p class="frozen-note">${source.label}：选中 r${chosen?.revision ?? ''}（快照内容不可修改）。</p>
+          <h3>差异</h3>
+          ${rows.length ? html`<div class="diff">${rows.map((row) => html`<div class="diff-row"><b>${row.field}</b><span class="before">- ${row.before || '（空）'}</span><br /><span class="after">+ ${row.after || '（空）'}</span></div>`)}</div>` : html`<div class="issue info">当前内容与所选冻结快照一致。</div>`}
+        ` : html`<div class="empty">尚无冻结快照。首次发布或修订发布成功后，这里会保留每一个发布版本。</div>`}
       </section>
     `;
   }
@@ -423,16 +535,22 @@ export class SpecA11yWorkbench extends LitElement {
     `;
   }
 
-  private renderValidation(issues: ValidationIssue[]): TemplateResult {
+  private renderValidation(component: ComponentSpec | undefined, issues: ValidationIssue[]): TemplateResult {
+    const blockers = component && component.status !== 'published' ? this.store.publishBlockers() : [];
     return html`
       <section class="panel">
         <div class="property-head">
           <h2>规范检查</h2>
           <sp-button size="s" variant="secondary" @click=${() => { this.showValidation = !this.showValidation; }}>${this.showValidation ? '收起' : '展开'}</sp-button>
         </div>
-        ${this.showValidation ? (issues.length ? issues.map((issue) => html`
-          <div class="issue ${issue.level}"><strong>${issue.target}</strong>${issue.message}</div>
-        `) : html`<div class="issue info"><strong>当前组件通过检查</strong>没有发现属性、示例或无障碍说明问题。</div>`) : nothing}
+        ${this.showValidation ? html`
+          ${component && component.status !== 'published' && blockers.length ? html`
+            <div class="issue error"><strong>不能发布：仍有 ${blockers.length} 项阻断问题</strong>${blockers.map((message) => html`${message}<br />`)}</div>
+          ` : nothing}
+          ${issues.length ? issues.map((issue) => html`
+            <div class="issue ${issue.level}"><strong>${issue.target}</strong>${issue.message}</div>
+          `) : html`<div class="issue info"><strong>${component?.status === 'published' ? '已发布版本通过检查' : '当前组件通过检查'}</strong>没有发现属性、示例或无障碍说明问题。</div>`}
+        ` : nothing}
       </section>
     `;
   }
@@ -443,12 +561,38 @@ export class SpecA11yWorkbench extends LitElement {
     return this.store.state.components.filter((component) => JSON.stringify(component).toLowerCase().includes(query));
   }
 
-  private hasStaleExamples(component: ComponentSpec): boolean {
-    return component.examples.some((example) => example.stale);
-  }
-
   private statusLabel(status: ComponentSpec['status']): string {
     return { draft: '草稿', review: '待审', published: '已发布' }[status];
+  }
+
+  private createRevisionForSelected() {
+    const result = this.store.createRevision();
+    if (result === 'created') {
+      this.historyRevision = null;
+      this.tab = 'overview';
+      this.flash('已从发布版复制为待审修订草稿');
+    } else if (result === 'existing') {
+      this.historyRevision = null;
+      this.flash('该组件已有进行中的修订草稿，已为你打开');
+    } else {
+      this.flash('只有已发布组件才能创建修订');
+    }
+  }
+
+  private publishSelected() {
+    const selected = this.store.selected;
+    if (!selected) return;
+    if (selected.status === 'published') {
+      this.flash('已发布组件只读，请先创建修订');
+      return;
+    }
+    const result = this.store.publishComponent();
+    if (result.ok) {
+      this.historyRevision = null;
+      this.flash('发布成功，新快照已冻结，历史快照保持不变');
+    } else {
+      this.flash(`无法发布：${result.reason ?? '存在未解决问题'}`);
+    }
   }
 
   private async copy(value: string) {
