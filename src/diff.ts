@@ -1,7 +1,8 @@
 import type { ComponentSnapshot, ComponentSpec, DiffRow } from './types';
 
 const selectedFields: Array<Exclude<keyof ComponentSpec, 'snapshots'>> = [
-  'name', 'category', 'status', 'purpose', 'usage', 'states', 'keyboardBehavior', 'screenReader', 'disabledScenarios'
+  'name', 'category', 'status', 'purpose', 'usage', 'states', 'interactionSignature',
+  'keyboardBehavior', 'screenReader', 'disabledScenarios'
 ];
 
 const format = (value: unknown): string => {

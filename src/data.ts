@@ -28,6 +28,8 @@ const components: ComponentSpec[] = [
         propertyIds: ['p-label', 'p-variant'],
         stale: false,
         staleReason: '',
+        needsConfirmation: false,
+        confirmReason: '',
         createdFromRevision: 3
       },
       {
@@ -37,12 +39,15 @@ const components: ComponentSpec[] = [
         propertyIds: ['p-label', 'p-disabled'],
         stale: false,
         staleReason: '',
+        needsConfirmation: false,
+        confirmReason: '',
         createdFromRevision: 3
       }
     ],
     revision: 3,
     updatedAt: now,
-    snapshots: []
+    snapshots: [],
+    retiredPropertyNames: []
   },
   {
     id: 'field-spec',
@@ -69,12 +74,15 @@ const components: ComponentSpec[] = [
         propertyIds: ['p-field-label', 'p-field-required'],
         stale: false,
         staleReason: '',
+        needsConfirmation: false,
+        confirmReason: '',
         createdFromRevision: 2
       }
     ],
     revision: 2,
     updatedAt: now,
-    snapshots: []
+    snapshots: [],
+    retiredPropertyNames: []
   },
   {
     id: 'dialog-spec',
@@ -99,18 +107,33 @@ const components: ComponentSpec[] = [
         title: '删除确认',
         code: '<sp-dialog open modal heading="删除组件？">\n  <sp-button slot="button" variant="negative">删除</sp-button>\n</sp-dialog>',
         propertyIds: ['p-dialog-open', 'p-dialog-title', 'p-dialog-modal'],
-        stale: true,
-        staleReason: '交互签名较上版发生变化，请确认焦点恢复与 Esc 行为。',
+        stale: false,
+        staleReason: '',
+        // 键盘行为较上版变化：所有关联示例都等待人工确认
+        needsConfirmation: true,
+        confirmReason: '键盘行为或读屏说明已变化，请确认示例的焦点恢复与 Esc 行为仍然成立。',
         createdFromRevision: 1
       }
     ],
     revision: 2,
     updatedAt: now,
-    snapshots: []
+    snapshots: [],
+    retiredPropertyNames: []
   }
 ];
 
-export const createInitialState = (): WorkspaceState => ({
-  components: structuredClone(components),
-  selectedId: components[0].id
-});
+export const createInitialState = (): WorkspaceState => {
+  const seeded = structuredClone(components);
+  // 已发布组件自带一个与当前内容一致的冻结快照，模拟“原发布版照旧可查”。
+  const published = seeded.find((component) => component.id === 'button-spec');
+  if (published) {
+    const { snapshots: _snapshots, ...body } = structuredClone(published);
+    published.snapshots = [{
+      revision: published.revision,
+      savedAt: '2026-09-20T08:00:00.000Z',
+      reason: '发布 r3',
+      component: body
+    }];
+  }
+  return { components: seeded, selectedId: components[0].id };
+};
